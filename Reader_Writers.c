@@ -149,7 +149,6 @@ int main (int argc,char** argv) {
                     double end_time=time(NULL);
                     printf("%s",shared_memory->response);
                     fflush(NULL);
-                    sem_up(sem_id,reader_block);
                     sem_up(sem_id,writer_block);
                     d_time+=end_time-start_time;
                 }
@@ -168,7 +167,6 @@ int main (int argc,char** argv) {
                 if (iter==line_number) {
                     strcpy(shared_memory->response,line);
                     sem_up(sem_id,printer_block);
-                    sem_down(sem_id,reader_block);
                     rewind(stream);
                     break;
                 }
