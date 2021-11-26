@@ -57,26 +57,37 @@ struct sh_buffer {
     char response[LINE_SIZE];
 };
 
-int main () { 
+int main (int argc,char** argv) { 
     int shm_id;
     int sem_id;
     struct sh_buffer *shared_memory;
     int pid;
+    int line_number;
     int key;
-    int NUM_LINES=20;
+    int NUM_LINES;
     int K;
     int N;
-    int line_number=5;
     int writer_block=0;
     int reader_block=1;
     int printer_block=2;
-    int printer_done=3;
     long int seed;
-    FILE *stream=fopen("demo.txt","r");
-    if (stream==NULL) {
-        perror("could not open file");
-        exit(1);
+    FILE *stream;
+    if (argc==2)  {
+        stream=fopen(argv[1],"r");
+        if (stream==NULL) {
+            perror("could not open file");
+            exit(1);
+        }
     }
+    else {
+        puts("Please provide a file");
+    }
+    char line[LINE_SIZE];
+    NUM_LINES=0;
+    while(fgets(line,LINE_SIZE,stream)!=NULL) {
+        NUM_LINES++;
+    }
+    rewind(stream);
     key=ftok("Reader_Writers.c",'A');
     /* Create a new shared memory segment */
     shm_id = shmget(key, sizeof(struct sh_buffer), IPC_CREAT | 0666);
@@ -86,14 +97,13 @@ int main () {
     }
 
     /* Create a new semaphore set id with three semaphores  */
-    sem_id = semget(key, 4, IPC_CREAT | IPC_EXCL | 0666);
+    sem_id = semget(key, 3, IPC_CREAT | IPC_EXCL | 0666);
     if (sem_id == -1) {
         perror("Semaphore creation ");
-        shmctl(sem_id, IPC_RMID, (struct shmid_ds *) NULL);
+        shmctl(sem_id, IPC_RMID, NULL);
         exit(EXIT_FAILURE);
     }
 
-    /* Set the value of the semaphore to 1 */
     union semun arg;
 
     arg.val =1;
@@ -101,15 +111,11 @@ int main () {
         perror("# Semaphore setting value ");
     }
     arg.val=0;
-    if (semctl(sem_id, reader_block, SETVAL, arg) == -1) {  //semaphore for allowing reader to read from shared memory only after a writer has wrote something
+    if (semctl(sem_id, reader_block, SETVAL, arg) == -1) {  //semaphore for allowing reader to read from shared memory only after a writer has requested a line
       perror("# Semaphore setting value ");
     }
     arg.val=0;
-    if (semctl(sem_id, printer_block, SETVAL, arg) == -1) {  //semaphore for allowing printer to read from shared memory only after the parent has responded with something
-      perror("# Semaphore setting value ");
-    }
-    arg.val=0;
-    if (semctl(sem_id, printer_done, SETVAL, arg) == -1) {  //semaphore for allowing printer to read from shared memory only after the parent has responded with something
+    if (semctl(sem_id, printer_block, SETVAL, arg) == -1) {  //semaphore for allowing printer to read from shared memory only after the parent has responded with the line requested
       perror("# Semaphore setting value ");
     }
 
@@ -131,36 +137,38 @@ int main () {
                 exit(EXIT_FAILURE);
             }
             if (pid==0) {
-                seed=time(NULL)^getpid();
+                seed=time(NULL)*getpid();
                 srand(seed);
-                for (int j=0;j<N;j++) {                    
+                double d_time=0.0;
+                for (int j=0;j<N;j++) {           
+                    double start_time=time(NULL);         
                     sem_down(sem_id,writer_block);
                     shared_memory->request=rand()%NUM_LINES;
                     sem_up(sem_id,reader_block);
                     sem_down(sem_id,printer_block);
+                    double end_time=time(NULL);
                     printf("%s",shared_memory->response);
                     fflush(NULL);
-                    sem_up(sem_id,printer_done);
-                    
-                    
+                    sem_up(sem_id,reader_block);
+                    sem_up(sem_id,writer_block);
+                    d_time+=end_time-start_time;
                 }
+                double mean_response_time=(double)d_time/((double)N);
+                printf("Proccess %d finished with an average time between request and response of: %lf\n",getpid(),mean_response_time);
                 exit(0);
             }
 
         }  
         for (int total_rep=0;total_rep<K*N;total_rep++) {
-            
             sem_down(sem_id,reader_block);
             line_number=shared_memory->request;
-            //sem_up(sem_id,writer_block);
             char line[LINE_SIZE];
             int iter=0;
             while (fgets(line,LINE_SIZE,stream)!=NULL) {
                 if (iter==line_number) {
                     strcpy(shared_memory->response,line);
                     sem_up(sem_id,printer_block);
-                    sem_down(sem_id,printer_done);
-                    sem_up(sem_id,writer_block);
+                    sem_down(sem_id,reader_block);
                     rewind(stream);
                     break;
                 }
